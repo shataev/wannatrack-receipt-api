@@ -3,6 +3,7 @@ import {
     Post,
     UploadedFile,
     UseInterceptors,
+    Body,
   } from '@nestjs/common';
   import { FileInterceptor } from '@nestjs/platform-express';
   import { ReceiptsService } from './receipts.service';
@@ -12,13 +13,14 @@ import {
   export class ReceiptsController {
     constructor(private readonly receiptsService: ReceiptsService) {}
   
-    // POST /receipts/analyze
-    @Post('analyze')
+    @Post('analyze/text')
+    analyzeText(@Body('text') text: string) {
+      return this.receiptsService.analyzeText(text);
+    }
+
+    @Post('analyze/receipt')
     @UseInterceptors(FileInterceptor('file'))
-    async analyzeReceipt(
-      @UploadedFile() file: Express.Multer.File,
-    ): Promise<ReceiptResultDto> {
-      // Вызываем сервис, который вернет данные
-      return this.receiptsService.analyze(file);
+    analyzeReceipt(@UploadedFile() file: Express.Multer.File) {
+      return this.receiptsService.analyzeFile(file);
     }
   }

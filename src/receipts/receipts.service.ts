@@ -1,12 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { ReceiptResultDto } from './dto/receipt-result.dto';
 import { AiClientService } from './ai-client/ai-client.service';
+import { ReceiptResultDto } from './dto/receipt-result.dto';
+import { Express } from 'express';
 
 @Injectable()
 export class ReceiptsService {
-  constructor(private readonly aiClientService: AiClientService) {}
-  
-  async analyze(file: Express.Multer.File): Promise<ReceiptResultDto> {
-    return this.aiClientService.processReceipt(file);
+  constructor(private readonly aiClient: AiClientService) {}
+
+  analyzeText(text: string): Promise<ReceiptResultDto> {
+    return this.aiClient.analyzeText(text);
+  }
+
+  analyzeFile(file: Express.Multer.File): Promise<ReceiptResultDto> {
+    return this.aiClient.analyzeFile(file);
   }
 }
