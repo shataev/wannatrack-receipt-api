@@ -1,17 +1,35 @@
 import { Injectable } from '@nestjs/common';
-import { AiClientService } from './ai-client/ai-client.service';
-import { ReceiptResultDto } from './dto/receipt-result.dto';
-import { Express } from 'express';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import FormData from 'form-data';
 
 @Injectable()
 export class ReceiptsService {
-  constructor(private readonly aiClient: AiClientService) {}
+  constructor(private readonly http: HttpService) {}
 
-  analyzeText(text: string): Promise<ReceiptResultDto> {
-    return this.aiClient.analyzeText(text);
+  private readonly AI_URL = 'http://127.0.0.1:8000/analyze';
+
+  async analyzeText(text: string) {
+    const form = new FormData();
+    form.append('text', text);
+
+    const response$ = this.http.post(this.AI_URL, form, {
+      headers: form.getHeaders(),
+    });
+
+    const { data } = await firstValueFrom(response$);
+    return data;
   }
 
-  analyzeFile(file: Express.Multer.File): Promise<ReceiptResultDto> {
-    return this.aiClient.analyzeFile(file);
+  async analyzeFile(file: Express.Multer.File) {
+    const form = new FormData();
+    form.append('file', file.buffer, file.originalname);
+
+    const response$ = this.http.post(this.AI_URL, form, {
+      headers: form.getHeaders(),
+    });
+
+    const { data } = await firstValueFrom(response$);
+    return data;
   }
 }

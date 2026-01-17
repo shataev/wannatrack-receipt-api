@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
-import { ReceiptsService } from './receipts.service';
+import { HttpModule } from '@nestjs/axios';
 import { ReceiptsController } from './receipts.controller';
-import { AiClientService } from './ai-client/ai-client.service';
+import { ReceiptsService } from './receipts.service';
 
 @Module({
-  providers: [ReceiptsService, AiClientService],
-  controllers: [ReceiptsController]
+  imports: [HttpModule],
+  controllers: [ReceiptsController],
+  providers: [ReceiptsService],
 })
 export class ReceiptsModule {}
