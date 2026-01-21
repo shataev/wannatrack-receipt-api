@@ -1,28 +1,33 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ReceiptsService } from './receipts.service';
-import { AiClientService } from './ai-client/ai-client.service';
+import { HttpService } from '@nestjs/axios';
 import { Express } from 'express';
+import { of } from 'rxjs';
 
 describe('ReceiptsService', () => {
   let service: ReceiptsService;
-  let aiClientMock: Partial<AiClientService>;
+  let httpServiceMock: Partial<HttpService>;
 
   beforeEach(async () => {
-    // Create a mock AiClientService with a predefined async response
-    aiClientMock = {
-      processReceipt: jest.fn().mockResolvedValue({
-        amount: 123.45,
-        currency: 'THB',
-        merchant: 'Demo Store',
-        confidence: 0.95,
-      }),
+    // Create a mock HttpService with a predefined async response
+    httpServiceMock = {
+      post: jest.fn().mockReturnValue(
+        of({
+          data: {
+            amount: 123.45,
+            currency: 'THB',
+            merchant: 'Demo Store',
+            confidence: 0.95,
+          },
+        }),
+      ),
     };
 
     // Set up the NestJS testing module and inject the mock
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReceiptsService,
-        { provide: AiClientService, useValue: aiClientMock }, // Inject mock instead of real AI client
+        { provide: HttpService, useValue: httpServiceMock }, // Inject mock instead of real HttpService
       ],
     }).compile();
 
@@ -35,7 +40,7 @@ describe('ReceiptsService', () => {
     expect(service).toBeDefined();
   });
 
-  it('should return structured receipt data', async () => {
+  it('should return structured receipt data from file', async () => {
     // Create a mock file to simulate Multer file upload
     const mockFile = {
       originalname: 'receipt.jpg',
@@ -44,7 +49,7 @@ describe('ReceiptsService', () => {
     } as Express.Multer.File;
 
     // Call the service method with the mock file
-    const result = await service.analyze(mockFile);
+    const result = await service.analyzeFile(mockFile);
 
     // Verify that the service returns the expected structured data
     expect(result).toEqual({
@@ -55,7 +60,22 @@ describe('ReceiptsService', () => {
     });
   });
 
-  it('should call AiClientService.processReceipt with the file', async () => {
+  it('should return structured receipt data from text', async () => {
+    const mockText = 'Receipt text content';
+
+    // Call the service method with the mock text
+    const result = await service.analyzeText(mockText);
+
+    // Verify that the service returns the expected structured data
+    expect(result).toEqual({
+      amount: 123.45,
+      currency: 'THB',
+      merchant: 'Demo Store',
+      confidence: 0.95,
+    });
+  });
+
+  it('should call HttpService.post with the file', async () => {
     // Create another mock file for testing delegation
     const mockFile = {
       originalname: 'receipt.jpg',
@@ -64,11 +84,16 @@ describe('ReceiptsService', () => {
     } as Express.Multer.File;
 
     // Call the service method
-    await service.analyze(mockFile);
+    await service.analyzeFile(mockFile);
 
-    // Ensure that AiClientService.processReceipt was called with the correct file
-    expect(aiClientMock.processReceipt).toHaveBeenCalledWith(mockFile);
-    // Ensure it was called exactly once
-    expect(aiClientMock.processReceipt).toHaveBeenCalledTimes(1);
+    // Ensure that HttpService.post was called
+    expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
+    expect(httpServiceMock.post).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/analyze',
+      expect.any(Object), // FormData object
+      expect.objectContaining({
+        headers: expect.any(Object),
+      }),
+    );
   });
 });
