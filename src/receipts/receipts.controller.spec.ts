@@ -9,19 +9,20 @@ describe('ReceiptsController', () => {
 
   beforeEach(async () => {
     // Create a mock of ReceiptsService with predefined responses
+    const mockResult = {
+      type: 'receipt' as const,
+      total: 123.45,
+      currency: 'THB',
+      merchant: 'Demo Store',
+      confidence: 0.95,
+      date: '2024-01-15T00:00:00.000Z',
+      items: [],
+      language: 'en',
+    };
+
     serviceMock = {
-      analyzeText: jest.fn().mockResolvedValue({
-        amount: 123.45,
-        currency: 'THB',
-        merchant: 'Demo Store',
-        confidence: 0.95,
-      }),
-      analyzeFile: jest.fn().mockResolvedValue({
-        amount: 123.45,
-        currency: 'THB',
-        merchant: 'Demo Store',
-        confidence: 0.95,
-      }),
+      analyzeText: jest.fn().mockResolvedValue(mockResult),
+      analyzeFile: jest.fn().mockResolvedValue(mockResult),
     };
 
     // Create a NestJS testing module and inject the mock service
@@ -48,12 +49,16 @@ describe('ReceiptsController', () => {
     const result = await controller.analyze(undefined, mockText);
 
     // Verify that the controller returns the mocked service response
-    expect(result).toEqual({
-      amount: 123.45,
+    expect(result).toMatchObject({
+      type: 'receipt',
+      total: 123.45,
       currency: 'THB',
       merchant: 'Demo Store',
       confidence: 0.95,
+      items: [],
+      language: 'en',
     });
+    expect(result.date).toBeDefined();
 
     // Ensure that the controller called ReceiptsService.analyzeText with the correct text
     expect(serviceMock.analyzeText).toHaveBeenCalledWith(mockText);
@@ -72,12 +77,16 @@ describe('ReceiptsController', () => {
     const result = await controller.analyze(mockFile, undefined);
 
     // Verify that the controller returns the mocked service response
-    expect(result).toEqual({
-      amount: 123.45,
+    expect(result).toMatchObject({
+      type: 'receipt',
+      total: 123.45,
       currency: 'THB',
       merchant: 'Demo Store',
       confidence: 0.95,
+      items: [],
+      language: 'en',
     });
+    expect(result.date).toBeDefined();
 
     // Ensure that the controller called ReceiptsService.analyzeFile with the correct file
     expect(serviceMock.analyzeFile).toHaveBeenCalledWith(mockFile);

@@ -14,10 +14,14 @@ describe('ReceiptsService', () => {
       post: jest.fn().mockReturnValue(
         of({
           data: {
-            amount: 123.45,
+            type: 'receipt',
+            total: 123.45,
             currency: 'THB',
             merchant: 'Demo Store',
             confidence: 0.95,
+            date: '2024-01-15',
+            items: [],
+            language: 'en',
           },
         }),
       ),
@@ -53,10 +57,14 @@ describe('ReceiptsService', () => {
 
     // Verify that the service returns the expected structured data
     expect(result).toEqual({
-      amount: 123.45,
+      type: 'receipt',
+      total: 123.45,
       currency: 'THB',
       merchant: 'Demo Store',
       confidence: 0.95,
+      date: expect.any(String),
+      items: [],
+      language: 'en',
     });
   });
 
@@ -68,10 +76,14 @@ describe('ReceiptsService', () => {
 
     // Verify that the service returns the expected structured data
     expect(result).toEqual({
-      amount: 123.45,
+      type: 'receipt',
+      total: 123.45,
       currency: 'THB',
       merchant: 'Demo Store',
       confidence: 0.95,
+      date: expect.any(String),
+      items: [],
+      language: 'en',
     });
   });
 
