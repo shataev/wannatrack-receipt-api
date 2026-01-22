@@ -25,6 +25,64 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Telegram Bot Setup
+
+### 1. Создание бота в Telegram
+
+1. Откройте Telegram и найдите [@BotFather](https://t.me/BotFather)
+2. Отправьте команду `/newbot`
+3. Следуйте инструкциям: укажите имя и username для бота
+4. После создания бота BotFather предоставит вам **токен** (например: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+### 2. Настройка переменных окружения
+
+Создайте файл `.env` в корне проекта:
+
+```bash
+TG_TOKEN=your_telegram_bot_token_here
+API_BASE_URL=http://localhost:3000
+PORT=3000
+```
+
+Замените `your_telegram_bot_token_here` на токен, полученный от BotFather.
+
+### 3. Запуск приложения
+
+```bash
+# Установка зависимостей (если еще не установлены)
+npm install
+
+# Запуск в режиме разработки
+npm run start:dev
+```
+
+Приложение запустится на порту 3000 (или указанном в PORT), и бот начнет слушать сообщения через long polling.
+
+### 4. Тестирование бота
+
+1. Найдите вашего бота в Telegram по username, который вы указали при создании
+2. Отправьте команду `/start` - бот должен ответить приветственным сообщением
+3. **Тест текстового сообщения:**
+   - Отправьте: `I bought a tent in Decathlon for 3000 rubles yesterday`
+   - Бот должен обработать сообщение и вернуть структурированную информацию о расходе
+4. **Тест фото чека:**
+   - Отправьте фото чека
+   - Бот должен загрузить фото, обработать его и вернуть информацию о расходе
+
+### 5. Проверка логов
+
+В консоли вы увидите логи обработки сообщений:
+```
+[TelegramBotService] Processing text message from user 123456789
+[TelegramBotUpdate] Error handling text message: ...
+```
+
+### Troubleshooting
+
+- **Бот не отвечает:** Убедитесь, что приложение запущено и токен правильный
+- **Ошибка "TG_TOKEN environment variable is required":** Проверьте, что файл `.env` создан и содержит правильный токен
+- **Ошибка при обработке фото:** Убедитесь, что API доступен по адресу `API_BASE_URL` и обрабатывает файлы
+
 ## Project setup
 
 ```bash
