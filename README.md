@@ -42,6 +42,9 @@
 TG_TOKEN=your_telegram_bot_token_here
 API_BASE_URL=http://localhost:3000
 PORT=3000
+# Опционально: URL внешнего AI-сервиса для разбора чеков (например http://127.0.0.1:8000).
+# Если не задан, используется локальная заглушка (результат без реального распознавания).
+AI_SERVICE_URL=http://127.0.0.1:8000
 ```
 
 Замените `your_telegram_bot_token_here` на токен, полученный от BotFather.

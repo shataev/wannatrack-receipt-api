@@ -1,12 +1,18 @@
 import { Injectable, HttpException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import FormData from 'form-data';
 import { ReceiptResultDto } from '../dto/receipt-result.dto';
-import { Express } from 'express';
+import { ReceiptAnalyzer } from './receipt-analyzer.interface';
 
 @Injectable()
-export class AiClientService {
-  private readonly baseUrl = 'http://127.0.0.1:8000';
+export class AiClientService implements ReceiptAnalyzer {
+  private readonly baseUrl: string;
+
+  constructor(private readonly configService: ConfigService) {
+    this.baseUrl =
+      this.configService.get<string>('AI_SERVICE_URL') || 'http://127.0.0.1:8000';
+  }
 
   async analyzeText(text: string): Promise<ReceiptResultDto> {
     try {
