@@ -11,6 +11,12 @@ export class TelegramBotUpdate {
 
   @Start()
   async onStart(@Ctx() ctx: Context) {
+    const payload = this.getStartPayload(ctx);
+    if (payload?.startsWith('bind_')) {
+      await this.handleTelegramBinding(ctx, payload);
+      return;
+    }
+
     await ctx.reply(
       '👋 Hello! I can help you track expenses.\n\n' +
       'Send me:\n' +
@@ -18,6 +24,44 @@ export class TelegramBotUpdate {
       '• Receipt photos\n\n' +
       'I will extract and return structured expense information.',
     );
+  }
+
+  /** Get start payload from deep link (e.g. t.me/bot?start=bind_xxx) */
+  private getStartPayload(ctx: Context): string | undefined {
+    const msg = ctx.message;
+    if (!msg || !('text' in msg) || !msg.text) return undefined;
+    const parts = msg.text.split(/\s+/);
+    return parts.length >= 2 ? parts[1] : undefined;
+  }
+
+  /** Handle account binding when user opens link from app (bind_<token>) */
+  private async handleTelegramBinding(ctx: Context, payload: string) {
+    const telegramId = ctx.from?.id;
+    if (!telegramId) {
+      await ctx.reply('❌ Could not identify your Telegram account. Please try again.');
+      return;
+    }
+
+    try {
+      await this.botService.bindTelegramAccount(payload, telegramId);
+      await ctx.reply(
+        '✅ Your Telegram account has been successfully linked to the app. You can now use the bot for expense tracking.',
+      );
+    } catch (error: any) {
+      const status = error.response?.status;
+      const message = error.response?.data?.message;
+      this.logger.warn(`Telegram bind failed for user ${telegramId}: ${message || error.message}`);
+
+      if (status === 400 && message?.toLowerCase().includes('expired')) {
+        await ctx.reply(
+          '⏱ This binding link has expired. Please generate a new link in the app and try again.',
+        );
+      } else if (status === 400) {
+        await ctx.reply('❌ Invalid or already used binding link. Please generate a new link in the app.');
+      } else {
+        await ctx.reply('❌ Failed to link your account. Please try again later.');
+      }
+    }
   }
 
   @On('text')

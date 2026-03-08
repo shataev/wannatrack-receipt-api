@@ -19,6 +19,7 @@ export class ReceiptsController {
     @Body('text') text?: string,
   ) {
     if (text) {
+      console.log('text', text);
       return this.receiptsService.analyzeText(text);
     }
 

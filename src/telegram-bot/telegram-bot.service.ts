@@ -10,7 +10,10 @@ import FormData from 'form-data';
 export class TelegramBotService {
   private readonly logger = new Logger(TelegramBotService.name);
   private readonly apiBaseUrl: string;
+  private readonly baseUrl: string;
   private readonly telegramToken: string;
+
+  private readonly botSecret: string;
 
   constructor(
     private readonly httpService: HttpService,
@@ -18,7 +21,34 @@ export class TelegramBotService {
   ) {
     // Use local API endpoint - adjust if your API runs on different host/port
     this.apiBaseUrl = this.configService.get<string>('API_BASE_URL') || 'http://localhost:3000';
+    this.baseUrl = this.configService.get<string>('BASE_URL') || 'http://localhost:3000';
     this.telegramToken = this.configService.get<string>('TG_TOKEN') || '';
+    this.botSecret = this.configService.get<string>('TELEGRAM_BOT_SECRET') || '';
+  }
+
+  /**
+   * Call backend to bind Telegram account to the user who created the binding link.
+   * @param payload - Start payload from link, e.g. "bind_<token>"
+   * @param telegramId - Telegram user id (from ctx.from.id)
+   * @returns Success result or throws on error
+   */
+  async bindTelegramAccount(payload: string, telegramId: number): Promise<{ success: boolean; userId?: string }> {
+    // Backend accepts token with or without "bind_" prefix
+    const token = payload.trim();
+
+    const response$ = this.httpService.post<{ success: boolean; userId?: string }>(
+      `${this.apiBaseUrl}/api/auth/telegram-bind`,
+      { token, telegramId },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.botSecret && { 'X-Telegram-Bot-Secret': this.botSecret }),
+        },
+      },
+    );
+
+    const { data } = await firstValueFrom(response$);
+    return data;
   }
 
   /**
@@ -35,7 +65,7 @@ export class TelegramBotService {
       formData.append('text', text);
 
       const response$ = this.httpService.post(
-        `${this.apiBaseUrl}/receipts/analyze`,
+        `${this.baseUrl}/receipts/analyze`,
         formData,
         {
           headers: formData.getHeaders(),
@@ -101,7 +131,7 @@ export class TelegramBotService {
 
       // Send to API
       const response$ = this.httpService.post(
-        `${this.apiBaseUrl}/receipts/analyze`,
+        `${this.baseUrl}/receipts/analyze`,
         formData,
         {
           headers: formData.getHeaders(),
@@ -127,7 +157,6 @@ export class TelegramBotService {
     }
 
     const { total, currency, merchant, confidence } = result;
-    console.log('result', result)
 
     let message = '✅ Expense extracted:\n\n';
     
