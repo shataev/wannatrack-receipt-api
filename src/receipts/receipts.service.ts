@@ -16,6 +16,9 @@ export class ReceiptsService {
   async analyzeText(text: string): Promise<ReceiptResultDto> {
     const raw = await this.analyzer.analyzeText(text);
 
+    console.log('raw', raw);
+    console.log(this.normalizeReceiptResult(raw));
+
     return this.normalizeReceiptResult(raw);
   }
 
@@ -39,8 +42,12 @@ export class ReceiptsService {
   }
 
   private normalizeDate(dateString: string, language?: string): string | null {
+    console.log('dateString', dateString);
+    console.log('language', language);
     try {
       const parsedDate = this.parseDate(dateString, language);
+
+      console.log('parsedDate', parsedDate);
 
       if (!parsedDate) {
         this.logger.warn(`Could not parse date: ${dateString}`);
