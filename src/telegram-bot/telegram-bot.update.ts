@@ -132,13 +132,13 @@ export class TelegramBotUpdate {
         const categoryId = data.slice(4);
         const pending = this.botService.getPendingExpense(chatId);
         if (!pending) {
-          await ctx.answerCbQuery('Сессия истекла. Отправьте чек снова.');
+          await ctx.answerCbQuery('Session expired. Please send the receipt again.');
           return;
         }
         this.botService.setPendingExpense(chatId, { ...pending, categoryId });
         const funds = await this.botService.getFunds(pending.userId);
         const keyboard = this.botService.buildFundKeyboard(funds);
-        await ctx.reply('Выберите счёт (или «Без счёта»):', {
+        await ctx.reply('Choose an account (or "No account"):', {
           reply_markup: keyboard,
         });
         await ctx.answerCbQuery();
@@ -148,13 +148,13 @@ export class TelegramBotUpdate {
       if (data.startsWith('fund_')) {
         const fundId = data === 'fund_none' ? null : data.slice(5);
         await this.botService.createCost(chatId, fundId);
-        await ctx.reply('✅ Расход сохранён.');
+        await ctx.reply('✅ Expense saved.');
         await ctx.answerCbQuery();
         return;
       }
     } catch (error) {
       this.logger.error(`Callback error: ${error.message}`, error.stack);
-      await ctx.answerCbQuery('Не удалось сохранить расход. Попробуйте ещё раз.');
+      await ctx.answerCbQuery('Failed to save expense. Please try again.');
       return;
     }
 
@@ -177,7 +177,7 @@ export class TelegramBotUpdate {
     const userId = await this.botService.getUserIdByTelegramId(telegramId);
     if (!userId) {
       await ctx.reply(
-        message + '\n\nПривяжите аккаунт в приложении, чтобы сохранять расходы.',
+        message + '\n\nLink your account in the app to save expenses.',
       );
       return;
     }
@@ -185,7 +185,7 @@ export class TelegramBotUpdate {
     const categories = await this.botService.getCategories(userId);
     if (categories.length === 0) {
       await ctx.reply(
-        message + '\n\nНет доступных категорий. Добавьте категории в приложении, чтобы сохранять расходы.',
+        message + '\n\nNo categories available. Add categories in the app to save expenses.',
       );
       return;
     }
@@ -201,7 +201,7 @@ export class TelegramBotUpdate {
     });
 
     const keyboard = this.botService.buildCategoryKeyboard(categories);
-    await ctx.reply(message + '\n\nВыберите категорию для сохранения:', {
+    await ctx.reply(message + '\n\nChoose a category to save:', {
       reply_markup: keyboard,
     });
   }

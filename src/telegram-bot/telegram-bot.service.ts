@@ -94,7 +94,7 @@ export class TelegramBotService {
         'fund_' + fund._id,
       ),
     ]);
-    buttons.push([Markup.button.callback('Без счёта', 'fund_none')]);
+    buttons.push([Markup.button.callback('No account', 'fund_none')]);
     return Markup.inlineKeyboard(buttons).reply_markup;
   }
 
