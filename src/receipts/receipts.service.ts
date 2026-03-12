@@ -33,11 +33,9 @@ export class ReceiptsService {
    */
   private normalizeReceiptResult(result: any): ReceiptResultDto {
     const normalized = { ...result };
-
-    if (normalized.date) {
-      normalized.date = this.normalizeDate(normalized.date, normalized.language);
-    }
-
+  
+    normalized.date = this.normalizeDate(normalized.date, normalized.language);
+    
     return normalized as ReceiptResultDto;
   }
 
