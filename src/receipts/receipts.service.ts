@@ -41,9 +41,11 @@ export class ReceiptsService {
     return normalized as ReceiptResultDto;
   }
 
-  private normalizeDate(dateString: string, language?: string): string | null {
-    console.log('dateString', dateString);
-    console.log('language', language);
+  private normalizeDate(dateString?: string, language?: string): string | null {
+    if (!dateString) {
+      return new Date().toISOString();
+    }
+
     try {
       const parsedDate = this.parseDate(dateString, language);
 
