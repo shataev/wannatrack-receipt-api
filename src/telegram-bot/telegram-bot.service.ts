@@ -88,9 +88,10 @@ export class TelegramBotService {
   }
 
   buildFundKeyboard(funds: CoreFund[]): InlineKeyboardMarkup {
-    const buttons = funds.slice(0, 15).map((fund) => [
+    const buttons = funds.filter((fund) => fund.currentBalance > 0)
+    .map((fund) => [
       Markup.button.callback(
-        `${fund.name} (${fund.currency})`,
+        `${fund.name} - ${fund.currentBalance} ${fund.currency}`,
         'fund_' + fund._id,
       ),
     ]);

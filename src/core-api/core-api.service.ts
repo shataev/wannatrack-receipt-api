@@ -12,8 +12,25 @@ export interface CoreCategory {
 export interface CoreFund {
   _id: string;
   name: string;
+  icon: string | null;
+  userId: string;
+  description: string;
+  initialBalance: number;
+  currentBalance: number;
+  isDefault: boolean;
   currency: string;
-  currentBalance?: number;
+  createdAt: string;
+  updatedAt: string;
+  __v?: number;
+}
+
+export interface GetFundsResponse {
+  funds: CoreFund[];
+  total: {
+    amount: number;
+    currency: string;
+    fundsCount: number;
+  };
 }
 
 export interface CreateCostPayload {
@@ -87,19 +104,21 @@ export class CoreApiService {
   }
 
   /**
-   * Get user's funds. Core API must expose e.g. GET /api/fund?userId=...
+   * Get user's funds. Core API must expose e.g. GET /api/funds?userId=...
    */
   async getFunds(userId: string): Promise<CoreFund[]> {
     try {
-      const response$ = this.httpService.get<CoreFund[]>(
-        `${this.apiBaseUrl}/api/fund`,
+      const response$ = this.httpService.get<GetFundsResponse>(
+        `${this.apiBaseUrl}/api/funds`,
         {
           params: { userId },
           headers: this.getHeaders(),
         },
       );
+
       const { data } = await firstValueFrom(response$);
-      return Array.isArray(data) ? data : [];
+
+      return Array.isArray(data?.funds) ? data.funds : [];
     } catch (error: any) {
       if (error.response?.status === 404) {
         return [];
