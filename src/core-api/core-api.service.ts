@@ -40,9 +40,6 @@ export interface CreateCostPayload {
   userId: string;
   date: string; // ISO
   fundId?: string;
-  /** When fundId is not provided */
-  currency?: string;
-  rate?: number;
 }
 
 @Injectable()

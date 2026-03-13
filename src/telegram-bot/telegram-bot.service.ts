@@ -110,12 +110,11 @@ export class TelegramBotService {
       userId: pending.userId,
       date: pending.date,
     };
+    
     if (fundId) {
       payload.fundId = fundId;
-    } else {
-      payload.currency = pending.currency;
-      payload.rate = 1;
-    }
+    } 
+
     await this.coreApi.createCost(payload);
     this.clearPendingExpense(chatId);
   }
