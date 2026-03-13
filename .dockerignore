@@ -1,0 +1,33 @@
+# Dependencies
+node_modules
+npm-debug.log*
+
+# Build and artifacts
+dist
+coverage
+*.tsbuildinfo
+
+# Git and IDE
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Documentation and misc
+README.md
+*.md
+.DS_Store
+
+# Tests (not needed in image)
+test
+*.spec.ts
+*.test.ts
+jest.config.js
+.eslintrc*
+.prettierrc*
+
+# Docker
+Dockerfile*
+.dockerignore
+docker-compose*
