@@ -147,10 +147,30 @@ export class TelegramBotUpdate {
 
       if (data.startsWith('fund_')) {
         const fundId = data === 'fund_none' ? null : data.slice(5);
-        await this.botService.createCost(chatId, fundId);
-        await ctx.reply('✅ Expense saved.');
-        await ctx.answerCbQuery();
-        return;
+        try {
+          await this.botService.createCost(chatId, fundId);
+          await ctx.reply('✅ Expense saved.');
+          await ctx.answerCbQuery();
+          return;
+        } catch (err: any) {
+          const apiError = err.response?.data?.error;
+          if (apiError === 'Insufficient funds') {
+            await ctx.answerCbQuery();
+            const pending = this.botService.getPendingExpense(chatId);
+            if (pending) {
+              const funds = await this.botService.getFunds(pending.userId);
+              const keyboard = this.botService.buildFundKeyboard(funds);
+              await ctx.reply(
+                '💸 Insufficient funds in the selected account. Choose another account or "No account":',
+                { reply_markup: keyboard },
+              );
+            } else {
+              await ctx.reply('❌ Session expired. Please send the receipt again.');
+            }
+            return;
+          }
+          throw err;
+        }
       }
     } catch (error) {
       this.logger.error(`Callback error: ${error.message}`, error.stack);
