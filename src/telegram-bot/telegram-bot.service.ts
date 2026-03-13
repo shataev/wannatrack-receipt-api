@@ -5,6 +5,24 @@ import { firstValueFrom } from 'rxjs';
 import { Context } from 'telegraf';
 import axios from 'axios';
 import FormData from 'form-data';
+import { Markup } from 'telegraf';
+import type { InlineKeyboardMarkup } from 'telegraf/types';
+import {
+  CoreApiService,
+  CoreCategory,
+  CoreFund,
+  CreateCostPayload,
+} from '../core-api/core-api.service';
+import { ReceiptResultDto } from '../receipts/dto/receipt-result.dto';
+
+export interface PendingExpense {
+  amount: number;
+  currency: string;
+  comment?: string;
+  date: string;
+  userId: string;
+  categoryId?: string;
+}
 
 @Injectable()
 export class TelegramBotService {
@@ -15,15 +33,90 @@ export class TelegramBotService {
 
   private readonly botSecret: string;
 
+  /** Pending expense per chat: after receipt recognition, before category/fund selection */
+  private readonly pendingByChat = new Map<number, PendingExpense>();
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly coreApi: CoreApiService,
   ) {
     // Use local API endpoint - adjust if your API runs on different host/port
     this.apiBaseUrl = this.configService.get<string>('API_BASE_URL') || 'http://localhost:3000';
     this.baseUrl = this.configService.get<string>('BASE_URL') || 'http://localhost:3000';
     this.telegramToken = this.configService.get<string>('TG_TOKEN') || '';
     this.botSecret = this.configService.get<string>('TELEGRAM_BOT_SECRET') || '';
+  }
+
+  setPendingExpense(chatId: number, expense: PendingExpense): void {
+    this.pendingByChat.set(chatId, expense);
+  }
+
+  getPendingExpense(chatId: number): PendingExpense | undefined {
+    return this.pendingByChat.get(chatId);
+  }
+
+  clearPendingExpense(chatId: number): void {
+    this.pendingByChat.delete(chatId);
+  }
+
+  getUserIdByTelegramId(telegramId: number): Promise<string | null> {
+    return this.coreApi.getUserIdByTelegramId(telegramId);
+  }
+
+  getCategories(userId: string): Promise<CoreCategory[]> {
+    return this.coreApi.getCategories(userId);
+  }
+
+  getFunds(userId: string): Promise<CoreFund[]> {
+    return this.coreApi.getFunds(userId);
+  }
+
+  buildCategoryKeyboard(categories: CoreCategory[]): InlineKeyboardMarkup {
+    const list = categories.slice(0, 20);
+    const rows: Array<ReturnType<typeof Markup.button.callback>[]> = [];
+    for (let i = 0; i < list.length; i += 2) {
+      const row = [
+        Markup.button.callback(list[i].name, 'cat_' + list[i].value),
+      ];
+      if (i + 1 < list.length) {
+        row.push(Markup.button.callback(list[i + 1].name, 'cat_' + list[i + 1].value));
+      }
+      rows.push(row);
+    }
+    return Markup.inlineKeyboard(rows).reply_markup;
+  }
+
+  buildFundKeyboard(funds: CoreFund[]): InlineKeyboardMarkup {
+    const buttons = funds.filter((fund) => fund.currentBalance > 0)
+    .map((fund) => [
+      Markup.button.callback(
+        `${fund.name} - ${fund.currentBalance} ${fund.currency}`,
+        'fund_' + fund._id,
+      ),
+    ]);
+    buttons.push([Markup.button.callback('No account', 'fund_none')]);
+    return Markup.inlineKeyboard(buttons).reply_markup;
+  }
+
+  async createCost(chatId: number, fundId: string | null): Promise<void> {
+    const pending = this.getPendingExpense(chatId);
+    if (!pending) throw new Error('No pending expense');
+
+    const payload: CreateCostPayload = {
+      amount: pending.amount,
+      category: pending.categoryId!,
+      comment: pending.comment,
+      userId: pending.userId,
+      date: pending.date,
+    };
+    
+    if (fundId) {
+      payload.fundId = fundId;
+    } 
+
+    await this.coreApi.createCost(payload);
+    this.clearPendingExpense(chatId);
   }
 
   /**
@@ -37,7 +130,7 @@ export class TelegramBotService {
     const token = payload.trim();
 
     const response$ = this.httpService.post<{ success: boolean; userId?: string }>(
-      `${this.apiBaseUrl}/api/auth/telegram-bind`,
+      `${this.apiBaseUrl}/api/telegram/telegram-bind`,
       { token, telegramId },
       {
         headers: {
@@ -57,7 +150,7 @@ export class TelegramBotService {
    * @param text - Text message content
    * @returns Structured expense information
    */
-  async handleText(chatId: number, text: string): Promise<any> {
+  async handleText(chatId: number, text: string): Promise<ReceiptResultDto> {
     try {
       this.logger.log(`Processing text message from user ${chatId}`);
 
@@ -148,17 +241,26 @@ export class TelegramBotService {
 
   /**
    * Format expense result for Telegram message
-   * @param result - Expense result from API
+   * @param result - Expense result from API (ReceiptResultDto)
    * @returns Formatted message string
    */
-  formatExpenseResult(result: any): string {
+  formatExpenseResult(result: ReceiptResultDto | null | undefined): string {
     if (!result) {
       return '❌ Could not extract expense information.';
     }
 
-    const { total, currency, merchant, confidence } = result;
+    const { total, currency, merchant, confidence, date } = result;
 
     let message = '✅ Expense extracted:\n\n';
+    
+    if (date) {
+      const dateObj = typeof date === 'string' ? new Date(date) : date;
+      const formatted =
+        dateObj instanceof Date && !isNaN(dateObj.getTime())
+          ? dateObj.toISOString().slice(0, 10)
+          : String(date);
+      message += `📅 Date: ${formatted}\n`;
+    }
     
     if (merchant) {
       message += `🏪 Merchant: ${merchant}\n`;

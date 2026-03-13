@@ -2,6 +2,7 @@ import { Update, On, Ctx, Start } from 'nestjs-telegraf';
 import { Context } from 'telegraf';
 import { TelegramBotService } from './telegram-bot.service';
 import { Logger } from '@nestjs/common';
+import { ReceiptResultDto } from '../receipts/dto/receipt-result.dto';
 
 @Update()
 export class TelegramBotUpdate {
@@ -67,6 +68,7 @@ export class TelegramBotUpdate {
   @On('text')
   async onText(@Ctx() ctx: Context) {
     const chatId = ctx.chat?.id;
+    const telegramId = ctx.from?.id;
 
     if (!chatId || !ctx.message || !('text' in ctx.message)) {
       return;
@@ -78,15 +80,10 @@ export class TelegramBotUpdate {
     }
 
     try {
-      // Show typing indicator
       await ctx.telegram.sendChatAction(chatId, 'typing');
 
-      // Process the text message
       const result = await this.botService.handleText(chatId, text);
-
-      // Format and send the result
-      const message = this.botService.formatExpenseResult(result);
-      await ctx.reply(message);
+      await this.replyWithExpenseAndSaveOption(ctx, chatId, telegramId, result);
     } catch (error) {
       this.logger.error(`Error handling text message: ${error.message}`, error.stack);
       await ctx.reply(
@@ -98,27 +95,135 @@ export class TelegramBotUpdate {
   @On('photo')
   async onPhoto(@Ctx() ctx: Context) {
     const chatId = ctx.chat?.id;
+    const telegramId = ctx.from?.id;
 
     if (!chatId) {
       return;
     }
 
     try {
-      // Show typing indicator
       await ctx.telegram.sendChatAction(chatId, 'upload_photo');
 
-      // Process the photo
       const result = await this.botService.handlePhoto(ctx);
-
-      // Format and send the result
-      const message = this.botService.formatExpenseResult(result);
-      await ctx.reply(message);
+      await this.replyWithExpenseAndSaveOption(ctx, chatId, telegramId, result);
     } catch (error) {
       this.logger.error(`Error handling photo message: ${error.message}`, error.stack);
       await ctx.reply(
         '❌ Sorry, I could not process the receipt image. Please make sure the image is clear and try again.',
       );
     }
+  }
+
+  @On('callback_query')
+  async onCallbackQuery(@Ctx() ctx: Context) {
+    const cb = ctx.callbackQuery;
+    const msg = cb?.message;
+    const chatId = msg && 'chat' in msg ? msg.chat.id : ctx.chat?.id;
+    const data =
+      cb && 'data' in cb && typeof cb.data === 'string' ? cb.data : undefined;
+
+    if (!data || chatId === undefined) {
+      await ctx.answerCbQuery();
+      return;
+    }
+
+    try {
+      if (data.startsWith('cat_')) {
+        const categoryId = data.slice(4);
+        const pending = this.botService.getPendingExpense(chatId);
+        if (!pending) {
+          await ctx.answerCbQuery('Session expired. Please send the receipt again.');
+          return;
+        }
+        this.botService.setPendingExpense(chatId, { ...pending, categoryId });
+        const funds = await this.botService.getFunds(pending.userId);
+        const keyboard = this.botService.buildFundKeyboard(funds);
+        await ctx.reply('Choose an account (or "No account"):', {
+          reply_markup: keyboard,
+        });
+        await ctx.answerCbQuery();
+        return;
+      }
+
+      if (data.startsWith('fund_')) {
+        const fundId = data === 'fund_none' ? null : data.slice(5);
+        try {
+          await this.botService.createCost(chatId, fundId);
+          await ctx.reply('✅ Expense saved.');
+          await ctx.answerCbQuery();
+          return;
+        } catch (err: any) {
+          const apiError = err.response?.data?.error;
+          if (apiError === 'Insufficient funds') {
+            await ctx.answerCbQuery();
+            const pending = this.botService.getPendingExpense(chatId);
+            if (pending) {
+              const funds = await this.botService.getFunds(pending.userId);
+              const keyboard = this.botService.buildFundKeyboard(funds);
+              await ctx.reply(
+                '💸 Insufficient funds in the selected account. Choose another account or "No account":',
+                { reply_markup: keyboard },
+              );
+            } else {
+              await ctx.reply('❌ Session expired. Please send the receipt again.');
+            }
+            return;
+          }
+          throw err;
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Callback error: ${error.message}`, error.stack);
+      await ctx.answerCbQuery('Failed to save expense. Please try again.');
+      return;
+    }
+
+    await ctx.answerCbQuery();
+  }
+
+  private async replyWithExpenseAndSaveOption(
+    ctx: Context,
+    chatId: number,
+    telegramId: number | undefined,
+    result: any,
+  ) {
+    const message = this.botService.formatExpenseResult(result);
+
+    if (!telegramId) {
+      await ctx.reply(message);
+      return;
+    }
+
+    const userId = await this.botService.getUserIdByTelegramId(telegramId);
+    if (!userId) {
+      await ctx.reply(
+        message + '\n\nLink your account in the app to save expenses.',
+      );
+      return;
+    }
+
+    const categories = await this.botService.getCategories(userId);
+    if (categories.length === 0) {
+      await ctx.reply(
+        message + '\n\nNo categories available. Add categories in the app to save expenses.',
+      );
+      return;
+    }
+
+    const dto = result as ReceiptResultDto;
+    const date = dto.date || new Date().toISOString();
+    this.botService.setPendingExpense(chatId, {
+      amount: dto.total,
+      currency: dto.currency || 'RUB',
+      comment: dto.merchant ?? undefined,
+      date,
+      userId,
+    });
+
+    const keyboard = this.botService.buildCategoryKeyboard(categories);
+    await ctx.reply(message + '\n\nChoose a category to save:', {
+      reply_markup: keyboard,
+    });
   }
 }
 

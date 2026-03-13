@@ -30,15 +30,17 @@ export class ReceiptsService {
    */
   private normalizeReceiptResult(result: any): ReceiptResultDto {
     const normalized = { ...result };
-
-    if (normalized.date) {
-      normalized.date = this.normalizeDate(normalized.date, normalized.language);
-    }
-
+  
+    normalized.date = this.normalizeDate(normalized.date, normalized.language);
+    
     return normalized as ReceiptResultDto;
   }
 
-  private normalizeDate(dateString: string, language?: string): string | null {
+  private normalizeDate(dateString?: string, language?: string): string | null {
+    if (!dateString) {
+      return new Date().toISOString();
+    }
+
     try {
       const parsedDate = this.parseDate(dateString, language);
 
