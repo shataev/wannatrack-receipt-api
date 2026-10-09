@@ -1,6 +1,6 @@
 import { Update, On, Ctx, Start } from 'nestjs-telegraf';
 import { Context } from 'telegraf';
-import { TelegramBotService } from './telegram-bot.service';
+import { PendingExpense, TelegramBotService } from './telegram-bot.service';
 import { Logger } from '@nestjs/common';
 import { ReceiptResultDto } from '../receipts/dto/receipt-result.dto';
 import {
@@ -142,6 +142,10 @@ export class TelegramBotUpdate {
           await ctx.answerCbQuery('Session expired. Please send the receipt again.');
           return;
         }
+        if (this.isPressedByOtherUser(ctx, pending)) {
+          await ctx.answerCbQuery();
+          return;
+        }
         this.botService.setPendingExpense(chatId, { ...pending, categoryId });
         const funds = await this.botService.getFunds(pending.telegramId);
         const keyboard = this.botService.buildFundKeyboard(funds);
@@ -154,6 +158,15 @@ export class TelegramBotUpdate {
 
       if (data.startsWith('fund_')) {
         const fundId = data === 'fund_none' ? null : data.slice(5);
+        if (
+          this.isPressedByOtherUser(
+            ctx,
+            this.botService.getPendingExpense(chatId),
+          )
+        ) {
+          await ctx.answerCbQuery();
+          return;
+        }
         try {
           await this.botService.createCost(chatId, fundId);
           await ctx.reply('✅ Expense saved.');
@@ -192,6 +205,18 @@ export class TelegramBotUpdate {
     }
 
     await ctx.answerCbQuery();
+  }
+
+  /**
+   * Only the Telegram user who started a pending expense may complete it.
+   * Pending expenses are kept per chat; this holds even if an update from a
+   * shared chat ever gets past the private-chat guard.
+   */
+  private isPressedByOtherUser(
+    ctx: Context,
+    pending: PendingExpense | undefined,
+  ): boolean {
+    return pending !== undefined && ctx.from?.id !== pending.telegramId;
   }
 
   private async replyWithExpenseAndSaveOption(
