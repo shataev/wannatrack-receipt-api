@@ -39,6 +39,35 @@ export interface CreateCostPayload {
   comment?: string;
   date: string; // ISO
   fundId?: string;
+  /** ISO code of what was spent; absent → the API books in the fund's (or the user's) currency */
+  currency?: string;
+  /** Absent → the API applies the user's active tag; `[]` saves the expense untagged */
+  tags?: string[];
+}
+
+/** The fields of the saved cost (POST /api/cost) the bot reports back. */
+export interface CreatedCost {
+  amount: number;
+  currency: string;
+  /** Debited from the fund, in the fund's currency; missing means `amount` */
+  fundAmount?: number;
+  tags?: string[];
+}
+
+/** The fields of the full user (GET /api/me) the bot reads. */
+export interface CoreUser {
+  activeTag?: string | null;
+  /** Unset on old accounts; the API then books in USD */
+  defaultCurrency?: string;
+}
+
+export interface CoreTag {
+  tag: string;
+  count: number;
+  total: number;
+  currency: string;
+  firstDate: string;
+  lastDate: string;
 }
 
 /**
@@ -148,15 +177,67 @@ export class CoreApiService {
   async createCost(
     telegramId: number,
     payload: CreateCostPayload,
-  ): Promise<unknown> {
+  ): Promise<CreatedCost> {
     try {
-      const response$ = this.httpService.post(
+      const response$ = this.httpService.post<CreatedCost>(
         `${this.apiBaseUrl}/api/cost`,
         payload,
         { headers: this.getHeaders(telegramId) },
       );
       const { data } = await firstValueFrom(response$);
       return data;
+    } catch (error: any) {
+      this.rethrowIfNotLinked(error, telegramId);
+      throw error;
+    }
+  }
+
+  /** The full user, for the active tag (GET /api/me). */
+  async getMe(telegramId: number): Promise<CoreUser> {
+    try {
+      const response$ = this.httpService.get<CoreUser>(
+        `${this.apiBaseUrl}/api/me`,
+        { headers: this.getHeaders(telegramId) },
+      );
+      const { data } = await firstValueFrom(response$);
+      return data;
+    } catch (error: any) {
+      this.rethrowIfNotLinked(error, telegramId);
+      throw error;
+    }
+  }
+
+  /**
+   * Set (or with `null` clear) the active tag. The API normalises it and
+   * answers with the full user; a tag that normalises to nothing clears it.
+   */
+  async setActiveTag(
+    telegramId: number,
+    tag: string | null,
+  ): Promise<CoreUser> {
+    try {
+      const response$ = this.httpService.put<CoreUser>(
+        `${this.apiBaseUrl}/api/me/active-tag`,
+        { tag },
+        { headers: this.getHeaders(telegramId) },
+      );
+      const { data } = await firstValueFrom(response$);
+      return data;
+    } catch (error: any) {
+      this.rethrowIfNotLinked(error, telegramId);
+      throw error;
+    }
+  }
+
+  /** The user's tags, most recently used first (GET /api/tags). */
+  async getTags(telegramId: number): Promise<CoreTag[]> {
+    try {
+      const response$ = this.httpService.get<CoreTag[]>(
+        `${this.apiBaseUrl}/api/tags`,
+        { headers: this.getHeaders(telegramId) },
+      );
+      const { data } = await firstValueFrom(response$);
+      return Array.isArray(data) ? data : [];
     } catch (error: any) {
       this.rethrowIfNotLinked(error, telegramId);
       throw error;
