@@ -20,7 +20,7 @@ export interface PendingExpense {
   currency: string;
   comment?: string;
   date: string;
-  userId: string;
+  telegramId: number;
   categoryId?: string;
 }
 
@@ -64,12 +64,12 @@ export class TelegramBotService {
     return this.coreApi.getUserIdByTelegramId(telegramId);
   }
 
-  getCategories(userId: string): Promise<CoreCategory[]> {
-    return this.coreApi.getCategories(userId);
+  getCategories(telegramId: number): Promise<CoreCategory[]> {
+    return this.coreApi.getCategories(telegramId);
   }
 
-  getFunds(userId: string): Promise<CoreFund[]> {
-    return this.coreApi.getFunds(userId);
+  getFunds(telegramId: number): Promise<CoreFund[]> {
+    return this.coreApi.getFunds(telegramId);
   }
 
   buildCategoryKeyboard(categories: CoreCategory[]): InlineKeyboardMarkup {
@@ -107,7 +107,6 @@ export class TelegramBotService {
       amount: pending.amount,
       category: pending.categoryId!,
       comment: pending.comment,
-      userId: pending.userId,
       date: pending.date,
     };
     
@@ -115,7 +114,7 @@ export class TelegramBotService {
       payload.fundId = fundId;
     } 
 
-    await this.coreApi.createCost(payload);
+    await this.coreApi.createCost(pending.telegramId, payload);
     this.clearPendingExpense(chatId);
   }
 
