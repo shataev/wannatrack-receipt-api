@@ -57,6 +57,8 @@ export interface CreatedCost {
 /** The fields of the full user (GET /api/me) the bot reads. */
 export interface CoreUser {
   activeTag?: string | null;
+  /** Unset on old accounts; the API then books in USD */
+  defaultCurrency?: string;
 }
 
 export interface CoreTag {

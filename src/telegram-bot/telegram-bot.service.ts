@@ -32,17 +32,41 @@ export interface PendingExpense {
   untagged?: boolean;
   /** The accounts offered on the keyboard, to name the chosen one afterwards */
   funds?: CoreFund[];
+  /** Offered again after the currency question */
+  categories?: CoreCategory[];
+  /** The save request is in flight: later changes cannot reach it */
+  saving?: boolean;
 }
 
 /**
+ * Symbols and words the analyzer may return instead of an ISO code. Keys are
+ * lowercase; lookup is case-insensitive.
+ */
+const CURRENCY_ALIASES: Record<string, string> = {
+  '¥': 'JPY',
+  円: 'JPY',
+  yen: 'JPY',
+  '฿': 'THB',
+  baht: 'THB',
+  '₫': 'VND',
+  dong: 'VND',
+  $: 'USD',
+  '€': 'EUR',
+  '₽': 'RUB',
+};
+
+/**
  * The analyzer's currency as an ISO 4217 code, or undefined when it gave
- * none (or something that is not a code, which the API would reject).
+ * none (`UNKNOWN`, empty) or something that is not a code.
  */
 export function toCurrencyCode(
   currency: string | null | undefined,
 ): string | undefined {
-  const code = currency?.trim().toUpperCase();
-  return code && /^[A-Z]{3}$/.test(code) ? code : undefined;
+  const raw = currency?.trim().toLowerCase();
+  if (!raw) return undefined;
+  const alias = CURRENCY_ALIASES[raw];
+  if (alias) return alias;
+  return /^[a-z]{3}$/.test(raw) ? raw.toUpperCase() : undefined;
 }
 
 /** An amount with the decimals its currency uses (JPY 1500, THB 352.40). */
@@ -61,6 +85,7 @@ export function formatMoney(value: number, currency: string): string {
 }
 
 export const WITHOUT_TAG_CALLBACK = 'notag';
+export const CURRENCY_CALLBACK_PREFIX = 'cur_';
 
 @Injectable()
 export class TelegramBotService {
@@ -92,6 +117,21 @@ export class TelegramBotService {
 
   getPendingExpense(chatId: number): PendingExpense | undefined {
     return this.pendingByChat.get(chatId);
+  }
+
+  /**
+   * Merges `patch` into the pending expense as it is now, not as it was
+   * before an await, so a choice made meanwhile (e.g. "Without #tag") is kept.
+   */
+  updatePendingExpense(
+    chatId: number,
+    patch: Partial<PendingExpense>,
+  ): PendingExpense | undefined {
+    const current = this.pendingByChat.get(chatId);
+    if (!current) return undefined;
+    const updated = { ...current, ...patch };
+    this.pendingByChat.set(chatId, updated);
+    return updated;
   }
 
   clearPendingExpense(chatId: number): void {
@@ -146,6 +186,28 @@ export class TelegramBotService {
     return Markup.inlineKeyboard(rows).reply_markup;
   }
 
+  /** The currencies of the user's accounts plus their default, each once. */
+  currencyChoices(funds: CoreFund[], defaultCurrency?: string): string[] {
+    const codes = [...funds.map((fund) => fund.currency), defaultCurrency]
+      .map((code) => toCurrencyCode(code))
+      .filter((code): code is string => code !== undefined);
+    return [...new Set(codes)];
+  }
+
+  buildCurrencyKeyboard(currencies: string[]): InlineKeyboardMarkup {
+    const rows: Array<ReturnType<typeof Markup.button.callback>[]> = [];
+    for (let i = 0; i < currencies.length; i += 3) {
+      rows.push(
+        currencies
+          .slice(i, i + 3)
+          .map((code) =>
+            Markup.button.callback(code, CURRENCY_CALLBACK_PREFIX + code),
+          ),
+      );
+    }
+    return Markup.inlineKeyboard(rows).reply_markup;
+  }
+
   buildFundKeyboard(funds: CoreFund[]): InlineKeyboardMarkup {
     const buttons = funds.filter((fund) => fund.currentBalance > 0)
     .map((fund) => [
@@ -180,7 +242,14 @@ export class TelegramBotService {
       payload.tags = [];
     }
 
-    const cost = await this.coreApi.createCost(pending.telegramId, payload);
+    this.updatePendingExpense(chatId, { saving: true });
+    let cost: CreatedCost;
+    try {
+      cost = await this.coreApi.createCost(pending.telegramId, payload);
+    } catch (error) {
+      this.updatePendingExpense(chatId, { saving: false });
+      throw error;
+    }
     this.clearPendingExpense(chatId);
 
     const fund = fundId
@@ -363,7 +432,7 @@ export class TelegramBotService {
     if (total) {
       message += currency
         ? `💰 Amount: ${total} ${currency}\n`
-        : `💰 Amount: ${total} (currency of the account)\n`;
+        : `💰 Amount: ${total} (currency not recognised)\n`;
     }
     
     if (confidence !== undefined) {

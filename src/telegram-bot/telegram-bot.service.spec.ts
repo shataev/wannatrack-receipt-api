@@ -122,6 +122,88 @@ describe('TelegramBotService', () => {
     });
   });
 
+  describe('updatePendingExpense', () => {
+    it('merges into the expense as it is now', () => {
+      service.setPendingExpense(42, pending());
+      const stale = service.getPendingExpense(42)!;
+      service.updatePendingExpense(42, { untagged: true });
+
+      service.updatePendingExpense(42, { categoryId: 'c2', funds: [] });
+
+      expect(service.getPendingExpense(42)).toEqual({
+        ...stale,
+        untagged: true,
+        categoryId: 'c2',
+        funds: [],
+      });
+    });
+
+    it('does nothing without a pending expense', () => {
+      expect(service.updatePendingExpense(42, { untagged: true })).toBe(
+        undefined,
+      );
+      expect(service.getPendingExpense(42)).toBeUndefined();
+    });
+  });
+
+  describe('createCost while in flight', () => {
+    it('marks the expense as saving, and clears the mark when the save fails', async () => {
+      let seenWhileSaving: boolean | undefined;
+      coreApi.createCost.mockImplementation(() => {
+        seenWhileSaving = service.getPendingExpense(42)?.saving;
+        return Promise.reject(new Error('Insufficient funds'));
+      });
+      service.setPendingExpense(42, pending());
+
+      await expect(service.createCost(42, 'f1')).rejects.toThrow();
+
+      expect(seenWhileSaving).toBe(true);
+      expect(service.getPendingExpense(42)?.saving).toBe(false);
+    });
+  });
+
+  describe('currencyChoices', () => {
+    const funds = ['THB', 'THB', 'usd', 'JPY'].map((currency) =>
+      fund({ currency }),
+    );
+
+    it('lists each account currency once, then the default currency', () => {
+      expect(service.currencyChoices(funds, 'EUR')).toEqual([
+        'THB',
+        'USD',
+        'JPY',
+        'EUR',
+      ]);
+    });
+
+    it('does not repeat the default when an account already has it', () => {
+      expect(service.currencyChoices(funds, 'USD')).toEqual([
+        'THB',
+        'USD',
+        'JPY',
+      ]);
+    });
+
+    it('works without accounts or without a default', () => {
+      expect(service.currencyChoices([], 'USD')).toEqual(['USD']);
+      expect(service.currencyChoices(funds)).toEqual(['THB', 'USD', 'JPY']);
+    });
+
+    it('builds one button per currency, three to a row', () => {
+      const keyboard = service.buildCurrencyKeyboard([
+        'THB',
+        'USD',
+        'JPY',
+        'EUR',
+      ]);
+      expect(
+        keyboard.inline_keyboard.map((row) =>
+          row.map((b) => ('callback_data' in b ? b.callback_data : '')),
+        ),
+      ).toEqual([['cur_THB', 'cur_USD', 'cur_JPY'], ['cur_EUR']]);
+    });
+  });
+
   describe('formatSavedCost', () => {
     it('shows no conversion when the account has the spent currency', () => {
       expect(
@@ -160,10 +242,16 @@ describe('TelegramBotService', () => {
     const receipt = (currency: string | null): ReceiptResultDto =>
       ({ total: 1500, currency, merchant: 'Ramen' }) as ReceiptResultDto;
 
-    it('says "currency of the account" instead of inventing RUB', () => {
-      const text = service.formatExpenseResult(receipt(null));
-      expect(text).toContain('💰 Amount: 1500 (currency of the account)');
+    it('says the currency was not recognised instead of inventing RUB', () => {
+      const text = service.formatExpenseResult(receipt('UNKNOWN'));
+      expect(text).toContain('💰 Amount: 1500 (currency not recognised)');
       expect(text).not.toContain('RUB');
+    });
+
+    it('shows a symbol from the analysis as its ISO code', () => {
+      expect(service.formatExpenseResult(receipt('¥'))).toContain(
+        '💰 Amount: 1500 JPY',
+      );
     });
 
     it('shows the analysed currency as an ISO code', () => {
@@ -195,14 +283,33 @@ describe('TelegramBotService', () => {
 
 describe('toCurrencyCode', () => {
   it.each([
+    ['¥', 'JPY'],
+    ['円', 'JPY'],
+    ['yen', 'JPY'],
+    ['Yen', 'JPY'],
     ['JPY', 'JPY'],
+    ['jpy', 'JPY'],
+    ['฿', 'THB'],
+    ['baht', 'THB'],
+    ['BAHT', 'THB'],
+    ['₫', 'VND'],
+    ['dong', 'VND'],
+    ['$', 'USD'],
+    ['usd', 'USD'],
+    ['€', 'EUR'],
+    ['eur', 'EUR'],
+    ['₽', 'RUB'],
+    ['rub', 'RUB'],
+    [' ¥ ', 'JPY'],
     [' thb ', 'THB'],
+    ['krw', 'KRW'],
+    ['UNKNOWN', undefined],
     ['', undefined],
+    ['  ', undefined],
     [null, undefined],
     [undefined, undefined],
-    ['¥', undefined],
-    ['yen', 'YEN'],
     ['JPY¥', undefined],
+    ['US$', undefined],
   ])('%p → %p', (input, expected) => {
     expect(toCurrencyCode(input)).toBe(expected);
   });

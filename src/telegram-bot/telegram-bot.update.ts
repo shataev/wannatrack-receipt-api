@@ -1,6 +1,7 @@
 import { Update, On, Ctx, Start, Command } from 'nestjs-telegraf';
 import { Context, Markup } from 'telegraf';
 import {
+  CURRENCY_CALLBACK_PREFIX,
   PendingExpense,
   TelegramBotService,
   WITHOUT_TAG_CALLBACK,
@@ -10,6 +11,7 @@ import { Logger } from '@nestjs/common';
 import { ReceiptResultDto } from '../receipts/dto/receipt-result.dto';
 import {
   CoreCategory,
+  CoreUser,
   TelegramAccountNotLinkedError,
 } from '../core-api/core-api.service';
 
@@ -270,16 +272,56 @@ export class TelegramBotUpdate {
           await ctx.answerCbQuery();
           return;
         }
-        this.botService.setPendingExpense(chatId, {
-          ...pending,
-          untagged: true,
-        });
+        if (pending.saving) {
+          await ctx.answerCbQuery(
+            'Too late: this expense is already being saved.',
+          );
+          return;
+        }
+        this.botService.updatePendingExpense(chatId, { untagged: true });
         await ctx.answerCbQuery(
           pending.activeTag
             ? `This expense will be saved without #${pending.activeTag}`
             : 'This expense will be saved without a tag',
         );
         await this.dropWithoutTagButton(ctx);
+        return;
+      }
+
+      if (data.startsWith(CURRENCY_CALLBACK_PREFIX)) {
+        const currency = toCurrencyCode(
+          data.slice(CURRENCY_CALLBACK_PREFIX.length),
+        );
+        const pending = this.botService.getPendingExpense(chatId);
+        if (!pending || !currency) {
+          await ctx.answerCbQuery(
+            'Session expired. Please send the receipt again.',
+          );
+          return;
+        }
+        if (this.isPressedByOtherUser(ctx, pending)) {
+          await ctx.answerCbQuery();
+          return;
+        }
+        const updated = this.botService.updatePendingExpense(chatId, {
+          currency,
+        })!;
+        if (updated.categoryId) {
+          // The API rejected the first currency at save time: back to the account.
+          await this.askForFund(
+            ctx,
+            chatId,
+            updated.telegramId,
+            'Choose an account (or "No account"):',
+          );
+        } else {
+          await this.askForCategory(
+            ctx,
+            `💰 Amount: ${updated.amount} ${currency}\n`,
+            updated,
+          );
+        }
+        await ctx.answerCbQuery();
         return;
       }
 
@@ -294,16 +336,13 @@ export class TelegramBotUpdate {
           await ctx.answerCbQuery();
           return;
         }
-        const funds = await this.botService.getFunds(pending.telegramId);
-        this.botService.setPendingExpense(chatId, {
-          ...pending,
-          categoryId,
-          funds,
-        });
-        const keyboard = this.botService.buildFundKeyboard(funds);
-        await ctx.reply('Choose an account (or "No account"):', {
-          reply_markup: keyboard,
-        });
+        this.botService.updatePendingExpense(chatId, { categoryId });
+        await this.askForFund(
+          ctx,
+          chatId,
+          pending.telegramId,
+          'Choose an account (or "No account"):',
+        );
         await ctx.answerCbQuery();
         return;
       }
@@ -330,22 +369,31 @@ export class TelegramBotUpdate {
             typeof apiError === 'string' &&
             apiError.startsWith('Exchange rate not found')
           ) {
-            // Retrying cannot help: the currency itself is unknown to the API.
-            this.botService.clearPendingExpense(chatId);
+            // Nothing was booked; the currency read from the receipt is one
+            // the API cannot convert, so ask for the real one.
             await ctx.answerCbQuery();
-            await ctx.reply(`❌ Not saved: ${apiError}.`);
+            const pending = this.botService.getPendingExpense(chatId);
+            if (!pending) {
+              await ctx.reply(`❌ Not saved: ${apiError}.`);
+              return;
+            }
+            await this.askForCurrency(
+              ctx,
+              chatId,
+              pending.telegramId,
+              `❓ Not saved: there is no exchange rate for ${pending.currency ?? 'this currency'}. Which currency was it?`,
+            );
             return;
           }
           if (apiError === 'Insufficient funds') {
             await ctx.answerCbQuery();
             const pending = this.botService.getPendingExpense(chatId);
             if (pending) {
-              const funds = await this.botService.getFunds(pending.telegramId);
-              this.botService.setPendingExpense(chatId, { ...pending, funds });
-              const keyboard = this.botService.buildFundKeyboard(funds);
-              await ctx.reply(
+              await this.askForFund(
+                ctx,
+                chatId,
+                pending.telegramId,
                 '💸 Insufficient funds in the selected account. Choose another account or "No account":',
-                { reply_markup: keyboard },
               );
             } else {
               await ctx.reply('❌ Session expired. Please send the receipt again.');
@@ -380,6 +428,74 @@ export class TelegramBotUpdate {
     pending: PendingExpense | undefined,
   ): boolean {
     return pending !== undefined && ctx.from?.id !== pending.telegramId;
+  }
+
+  /** Offers the accounts; the list is kept to name the chosen one afterwards. */
+  private async askForFund(
+    ctx: Context,
+    chatId: number,
+    telegramId: number,
+    text: string,
+  ) {
+    const funds = await this.botService.getFunds(telegramId);
+    // Merged into the expense as it is after the await, not before it.
+    this.botService.updatePendingExpense(chatId, { funds });
+    await ctx.reply(text, {
+      reply_markup: this.botService.buildFundKeyboard(funds),
+    });
+  }
+
+  private async askForCategory(
+    ctx: Context,
+    text: string,
+    pending: PendingExpense,
+  ) {
+    const tagLine = pending.activeTag
+      ? `🏷 Trip: #${pending.activeTag}\n\n`
+      : '';
+    const keyboard = this.botService.buildCategoryKeyboard(
+      pending.categories ?? [],
+      pending.activeTag,
+    );
+    await ctx.reply(text + '\n' + tagLine + 'Choose a category to save:', {
+      reply_markup: keyboard,
+    });
+  }
+
+  /**
+   * The currency is not known (or the API cannot convert it): never fall back
+   * to the account's currency silently, ask with the currencies the user has.
+   */
+  private async askForCurrency(
+    ctx: Context,
+    chatId: number,
+    telegramId: number,
+    text: string,
+    { user }: { user?: CoreUser | null } = {},
+  ) {
+    const funds = await this.botService.getFunds(telegramId);
+    if (user === undefined) {
+      user = await this.botService.getMe(telegramId).catch((error: Error) => {
+        if (error instanceof TelegramAccountNotLinkedError) throw error;
+        this.logger.warn(`Could not read the user: ${error.message}`);
+        return null;
+      });
+    }
+    // Same fallback the API applies to a user without a default currency.
+    const defaultCurrency = user ? user.defaultCurrency || 'USD' : undefined;
+    const choices = this.botService.currencyChoices(funds, defaultCurrency);
+
+    if (choices.length === 0) {
+      this.botService.clearPendingExpense(chatId);
+      await ctx.reply(
+        text +
+          '\n\n❌ Could not load your accounts to offer currencies. Please send the expense again with its currency.',
+      );
+      return;
+    }
+    await ctx.reply(text, {
+      reply_markup: this.botService.buildCurrencyKeyboard(choices),
+    });
   }
 
   /** Removes the "without #tag" row from the message whose button was pressed. */
@@ -440,9 +556,9 @@ export class TelegramBotUpdate {
       return;
     }
 
-    let activeTag: string | null = null;
+    let user: CoreUser | null = null;
     try {
-      activeTag = (await this.botService.getMe(telegramId)).activeTag ?? null;
+      user = await this.botService.getMe(telegramId);
     } catch (error) {
       if (error instanceof TelegramAccountNotLinkedError) {
         await ctx.reply(message + '\n\n' + NOT_LINKED_MESSAGE);
@@ -454,23 +570,28 @@ export class TelegramBotUpdate {
 
     const dto = result as ReceiptResultDto;
     const date = dto.date || new Date().toISOString();
-    this.botService.setPendingExpense(chatId, {
+    const pending: PendingExpense = {
       amount: dto.total,
       currency: toCurrencyCode(dto.currency),
       comment: dto.merchant ?? undefined,
       date,
       telegramId,
-      activeTag,
-    });
-
-    const tagLine = activeTag ? `🏷 Trip: #${activeTag}\n\n` : '';
-    const keyboard = this.botService.buildCategoryKeyboard(
+      activeTag: user?.activeTag ?? null,
       categories,
-      activeTag,
-    );
-    await ctx.reply(message + '\n' + tagLine + 'Choose a category to save:', {
-      reply_markup: keyboard,
-    });
+    };
+    this.botService.setPendingExpense(chatId, pending);
+
+    if (!pending.currency) {
+      await this.askForCurrency(
+        ctx,
+        chatId,
+        telegramId,
+        message + '\n❓ I could not read the currency. Which currency was it?',
+        { user },
+      );
+      return;
+    }
+    await this.askForCategory(ctx, message, pending);
   }
 }
 

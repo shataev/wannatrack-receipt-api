@@ -94,6 +94,18 @@ describe('TelegramBotUpdate', () => {
       }?,
     ];
 
+  const buttonData = (extra?: {
+    reply_markup?: {
+      inline_keyboard: { text: string; callback_data: string }[][];
+    };
+  }) =>
+    extra?.reply_markup?.inline_keyboard.map((row) =>
+      row.map((button) => button.callback_data),
+    );
+
+  /** Lets a handler run up to its first pending await. */
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
   describe('button presses', () => {
     beforeEach(setPending);
 
@@ -130,20 +142,108 @@ describe('TelegramBotUpdate', () => {
       expect(botService.getPendingExpense(CHAT_ID)).toBeUndefined();
     });
 
-    it('tells the user when the API knows no rate for the currency', async () => {
-      coreApi.createCost.mockRejectedValue({
-        response: {
-          status: 400,
-          data: { error: 'Exchange rate not found for currency: XYZ' },
-        },
-      });
+    it('asks for the currency again when the API has no rate for it', async () => {
+      botService.updatePendingExpense(CHAT_ID, { currency: 'KRW' });
+      coreApi.getMe.mockResolvedValue({ defaultCurrency: 'USD' });
+      coreApi.getFunds.mockResolvedValue([
+        { _id: 'f1', name: 'Card', currency: 'THB', currentBalance: 5000 },
+      ]);
+      coreApi.createCost
+        .mockRejectedValueOnce({
+          response: {
+            status: 400,
+            data: { error: 'Exchange rate not found for currency: KRW' },
+          },
+        })
+        .mockResolvedValueOnce({ amount: 250, currency: 'THB' });
 
-      const ctx = await press(OWNER_ID, 'fund_f1');
+      const rejected = await press(OWNER_ID, 'fund_f1');
 
-      expect(lastReply(ctx)[0]).toBe(
-        '❌ Not saved: Exchange rate not found for currency: XYZ.',
+      const [question, extra] = lastReply(rejected);
+      expect(question).toContain('no exchange rate for KRW');
+      expect(question).toContain('Which currency was it?');
+      expect(buttonData(extra)).toEqual([['cur_THB', 'cur_USD']]);
+      expect(botService.getPendingExpense(CHAT_ID)?.categoryId).toBe('c1');
+
+      // Category is already chosen, so the choice leads back to the accounts.
+      const chosen = await press(OWNER_ID, 'cur_THB');
+      expect(buttonData(lastReply(chosen)[1])).toEqual([
+        ['fund_f1'],
+        ['fund_none'],
+      ]);
+
+      await press(OWNER_ID, 'fund_f1');
+      expect(coreApi.createCost).toHaveBeenLastCalledWith(
+        OWNER_ID,
+        expect.objectContaining({
+          category: 'c1',
+          fundId: 'f1',
+          currency: 'THB',
+        }),
       );
       expect(botService.getPendingExpense(CHAT_ID)).toBeUndefined();
+    });
+
+    it('ignores a currency button pressed by another Telegram user', async () => {
+      const ctx = await press(OTHER_ID, 'cur_JPY');
+
+      expect(ctx.reply).not.toHaveBeenCalled();
+      expect(botService.getPendingExpense(CHAT_ID)?.currency).toBe('RUB');
+    });
+  });
+
+  describe('"Without #tag" racing other presses', () => {
+    beforeEach(() => {
+      botService.setPendingExpense(CHAT_ID, {
+        amount: 1500,
+        currency: 'JPY',
+        date: '2026-10-25T00:00:00.000Z',
+        telegramId: OWNER_ID,
+        activeTag: 'japan-2026',
+      });
+    });
+
+    it('sticks when pressed while the category press is still loading accounts', async () => {
+      let releaseFunds!: (funds: unknown[]) => void;
+      coreApi.getFunds.mockReturnValueOnce(
+        new Promise((resolve) => (releaseFunds = resolve)),
+      );
+
+      const category = press(OWNER_ID, 'cat_c1');
+      await flush();
+      const notag = await press(OWNER_ID, 'notag');
+      releaseFunds([
+        { _id: 'f1', name: 'Card', currency: 'THB', currentBalance: 5000 },
+      ]);
+      await category;
+      await press(OWNER_ID, 'fund_f1');
+
+      expect(notag.answerCbQuery).toHaveBeenCalledWith(
+        'This expense will be saved without #japan-2026',
+      );
+      expect(coreApi.createCost).toHaveBeenCalledWith(
+        OWNER_ID,
+        expect.objectContaining({ category: 'c1', fundId: 'f1', tags: [] }),
+      );
+    });
+
+    it('says it is too late while the save is in flight, instead of promising', async () => {
+      botService.updatePendingExpense(CHAT_ID, { categoryId: 'c1' });
+      let finishSave!: (cost: unknown) => void;
+      coreApi.createCost.mockReturnValueOnce(
+        new Promise((resolve) => (finishSave = resolve)),
+      );
+
+      const save = press(OWNER_ID, 'fund_none');
+      await flush();
+      const notag = await press(OWNER_ID, 'notag');
+      finishSave({ amount: 1500, currency: 'JPY', tags: ['japan-2026'] });
+      await save;
+
+      expect(notag.answerCbQuery).toHaveBeenCalledWith(
+        'Too late: this expense is already being saved.',
+      );
+      expect(notag.editMessageReplyMarkup).not.toHaveBeenCalled();
     });
   });
 
@@ -180,16 +280,108 @@ describe('TelegramBotUpdate', () => {
       );
     });
 
-    it('keeps no currency when the analysis had none', async () => {
+    it('maps a currency symbol from the analysis to its code', async () => {
       jest
         .spyOn(botService, 'handleText')
-        .mockResolvedValue({ total: 300, currency: null } as never);
-      const ctx = textCtx('coffee 300');
+        .mockResolvedValue({ total: 1500, currency: '¥' } as never);
+      const ctx = textCtx('ramen ¥1500');
 
       await update.onText(ctx as unknown as Context);
 
-      expect(lastReply(ctx)[0]).toContain('(currency of the account)');
-      expect(botService.getPendingExpense(CHAT_ID)?.currency).toBeUndefined();
+      expect(lastReply(ctx)[0]).toContain('💰 Amount: 1500 JPY');
+      expect(botService.getPendingExpense(CHAT_ID)?.currency).toBe('JPY');
+    });
+
+    describe('when the currency is not recognised', () => {
+      beforeEach(() => {
+        jest.spyOn(botService, 'handleText').mockResolvedValue({
+          total: 1500,
+          currency: 'UNKNOWN',
+          merchant: 'Ramen',
+          date: '2026-10-25T00:00:00.000Z',
+        } as never);
+        coreApi.getFunds.mockResolvedValue(
+          [
+            ['f1', 'THB'],
+            ['f2', 'THB'],
+            ['f3', 'JPY'],
+          ].map(([_id, currency]) => ({
+            _id,
+            name: _id,
+            currency,
+            currentBalance: 5000,
+          })),
+        );
+      });
+
+      it('asks which currency before the category, from accounts plus the default', async () => {
+        coreApi.getMe.mockResolvedValue({
+          activeTag: 'japan-2026',
+          defaultCurrency: 'USD',
+        });
+        const ctx = textCtx('ramen 1500');
+
+        await update.onText(ctx as unknown as Context);
+
+        const [text, extra] = lastReply(ctx);
+        expect(text).toContain('(currency not recognised)');
+        expect(text).toContain('Which currency was it?');
+        expect(text).not.toContain('Choose a category');
+        expect(buttonData(extra)).toEqual([['cur_THB', 'cur_JPY', 'cur_USD']]);
+        expect(ctx.reply).toHaveBeenCalledTimes(1);
+      });
+
+      it('uses the chosen currency all the way to the save', async () => {
+        coreApi.getMe.mockResolvedValue({
+          activeTag: 'japan-2026',
+          defaultCurrency: 'USD',
+        });
+        await update.onText(textCtx('ramen 1500') as unknown as Context);
+
+        const chosen = await press(OWNER_ID, 'cur_JPY');
+        const [text, extra] = lastReply(chosen);
+        expect(text).toContain('💰 Amount: 1500 JPY');
+        expect(text).toContain('🏷 Trip: #japan-2026');
+        expect(buttonData(extra)).toEqual([['cat_c1'], ['notag']]);
+
+        await press(OWNER_ID, 'cat_c1');
+        await press(OWNER_ID, 'fund_f1');
+        expect(coreApi.createCost).toHaveBeenCalledWith(
+          OWNER_ID,
+          expect.objectContaining({ currency: 'JPY', fundId: 'f1' }),
+        );
+      });
+
+      it('falls back to USD as the default, as the API does', async () => {
+        coreApi.getMe.mockResolvedValue({ activeTag: null });
+        coreApi.getFunds.mockResolvedValue([]);
+        const ctx = textCtx('ramen 1500');
+
+        await update.onText(ctx as unknown as Context);
+
+        expect(buttonData(lastReply(ctx)[1])).toEqual([['cur_USD']]);
+      });
+
+      it('offers the account currencies when the user cannot be read', async () => {
+        coreApi.getMe.mockRejectedValue(new Error('timeout'));
+        const ctx = textCtx('ramen 1500');
+
+        await update.onText(ctx as unknown as Context);
+
+        expect(buttonData(lastReply(ctx)[1])).toEqual([['cur_THB', 'cur_JPY']]);
+      });
+
+      it('never saves in the account currency when there is nothing to offer', async () => {
+        coreApi.getMe.mockRejectedValue(new Error('timeout'));
+        coreApi.getFunds.mockResolvedValue([]);
+        const ctx = textCtx('ramen 1500');
+
+        await update.onText(ctx as unknown as Context);
+
+        expect(lastReply(ctx)[0]).toContain('Please send the expense again');
+        expect(botService.getPendingExpense(CHAT_ID)).toBeUndefined();
+        expect(coreApi.createCost).not.toHaveBeenCalled();
+      });
     });
 
     it('still offers to save when the active tag cannot be read', async () => {
