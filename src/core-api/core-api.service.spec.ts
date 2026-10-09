@@ -17,12 +17,13 @@ interface RequestConfig {
 
 describe('CoreApiService', () => {
   let service: CoreApiService;
-  let http: { get: jest.Mock; post: jest.Mock };
+  let http: { get: jest.Mock; post: jest.Mock; put: jest.Mock };
 
   beforeEach(async () => {
     http = {
       get: jest.fn(),
       post: jest.fn(),
+      put: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -155,6 +156,40 @@ describe('CoreApiService', () => {
       expectNoUserId(url, config, body);
     });
 
+    it('sends currency and an explicit empty tag list as given', async () => {
+      http.post.mockReturnValue(of({ data: {} }));
+      const payload = {
+        amount: 1500,
+        category: 'c1',
+        date: '2026-10-09T00:00:00.000Z',
+        currency: 'JPY',
+        tags: [],
+      };
+
+      await service.createCost(TELEGRAM_ID, payload);
+
+      const [, body] = http.post.mock.calls[0] as [string, object];
+      expect(body).toEqual(payload);
+    });
+
+    it('returns the saved cost', async () => {
+      const saved = {
+        amount: 1500,
+        currency: 'JPY',
+        fundAmount: 352.4,
+        tags: ['japan-2026'],
+      };
+      http.post.mockReturnValue(of({ data: saved }));
+
+      await expect(
+        service.createCost(TELEGRAM_ID, {
+          amount: 1500,
+          category: 'c1',
+          date: '2026-10-09T00:00:00.000Z',
+        }),
+      ).resolves.toEqual(saved);
+    });
+
     it('turns a 401 into TelegramAccountNotLinkedError', async () => {
       http.post.mockReturnValue(unauthorized());
 
@@ -181,6 +216,97 @@ describe('CoreApiService', () => {
           date: '2026-10-09T00:00:00.000Z',
         }),
       ).rejects.toBe(insufficient);
+    });
+  });
+
+  describe('getMe', () => {
+    it('reads GET /api/me with both identity headers', async () => {
+      http.get.mockReturnValue(of({ data: { activeTag: 'japan-2026' } }));
+
+      await expect(service.getMe(TELEGRAM_ID)).resolves.toEqual({
+        activeTag: 'japan-2026',
+      });
+
+      const [url, config] = http.get.mock.calls[0] as [string, RequestConfig];
+      expect(url).toBe('http://core.test/api/me');
+      expectIdentityHeaders(config);
+      expectNoUserId(url, config);
+    });
+
+    it('turns a 401 into TelegramAccountNotLinkedError', async () => {
+      http.get.mockReturnValue(unauthorized());
+
+      await expect(service.getMe(TELEGRAM_ID)).rejects.toBeInstanceOf(
+        TelegramAccountNotLinkedError,
+      );
+    });
+  });
+
+  describe('setActiveTag', () => {
+    it('PUTs { tag } to /api/me/active-tag and returns the user', async () => {
+      http.put.mockReturnValue(of({ data: { activeTag: 'japan-2026' } }));
+
+      await expect(
+        service.setActiveTag(TELEGRAM_ID, 'Japan 2026'),
+      ).resolves.toEqual({ activeTag: 'japan-2026' });
+
+      const [url, body, config] = http.put.mock.calls[0] as [
+        string,
+        object,
+        RequestConfig,
+      ];
+      expect(url).toBe('http://core.test/api/me/active-tag');
+      expect(body).toEqual({ tag: 'Japan 2026' });
+      expectIdentityHeaders(config);
+      expectNoUserId(url, config, body);
+    });
+
+    it('sends tag: null to clear', async () => {
+      http.put.mockReturnValue(of({ data: { activeTag: null } }));
+
+      await service.setActiveTag(TELEGRAM_ID, null);
+
+      const [, body] = http.put.mock.calls[0] as [string, object];
+      expect(body).toEqual({ tag: null });
+    });
+
+    it('turns a 401 into TelegramAccountNotLinkedError', async () => {
+      http.put.mockReturnValue(unauthorized());
+
+      await expect(
+        service.setActiveTag(TELEGRAM_ID, 'x'),
+      ).rejects.toBeInstanceOf(TelegramAccountNotLinkedError);
+    });
+  });
+
+  describe('getTags', () => {
+    it('reads GET /api/tags with both identity headers', async () => {
+      const tags = [
+        {
+          tag: 'japan-2026',
+          count: 3,
+          total: 1200,
+          currency: 'THB',
+          firstDate: '2026-10-24T00:00:00.000Z',
+          lastDate: '2026-10-25T00:00:00.000Z',
+        },
+      ];
+      http.get.mockReturnValue(of({ data: tags }));
+
+      await expect(service.getTags(TELEGRAM_ID)).resolves.toEqual(tags);
+
+      const [url, config] = http.get.mock.calls[0] as [string, RequestConfig];
+      expect(url).toBe('http://core.test/api/tags');
+      expectIdentityHeaders(config);
+      expectNoUserId(url, config);
+    });
+
+    it('turns a 401 into TelegramAccountNotLinkedError', async () => {
+      http.get.mockReturnValue(unauthorized());
+
+      await expect(service.getTags(TELEGRAM_ID)).rejects.toBeInstanceOf(
+        TelegramAccountNotLinkedError,
+      );
     });
   });
 });
