@@ -5,6 +5,7 @@ import { TelegramBotService } from './telegram-bot.service';
 import { TelegramBotUpdate } from './telegram-bot.update';
 import { HttpModule } from '@nestjs/axios';
 import { CoreApiModule } from '../core-api/core-api.module';
+import { privateChatOnly } from './private-chat-only.middleware';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { CoreApiModule } from '../core-api/core-api.module';
         }
         return {
           token,
+          middlewares: [privateChatOnly],
         };
       },
       inject: [ConfigService],
