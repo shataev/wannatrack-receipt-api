@@ -3,6 +3,13 @@ import { Context } from 'telegraf';
 import { TelegramBotService } from './telegram-bot.service';
 import { Logger } from '@nestjs/common';
 import { ReceiptResultDto } from '../receipts/dto/receipt-result.dto';
+import {
+  CoreCategory,
+  TelegramAccountNotLinkedError,
+} from '../core-api/core-api.service';
+
+const NOT_LINKED_MESSAGE =
+  '🔗 Your Telegram account is not linked to the app. Link it in the app and send the expense again.';
 
 @Update()
 export class TelegramBotUpdate {
@@ -136,7 +143,7 @@ export class TelegramBotUpdate {
           return;
         }
         this.botService.setPendingExpense(chatId, { ...pending, categoryId });
-        const funds = await this.botService.getFunds(pending.userId);
+        const funds = await this.botService.getFunds(pending.telegramId);
         const keyboard = this.botService.buildFundKeyboard(funds);
         await ctx.reply('Choose an account (or "No account"):', {
           reply_markup: keyboard,
@@ -158,7 +165,7 @@ export class TelegramBotUpdate {
             await ctx.answerCbQuery();
             const pending = this.botService.getPendingExpense(chatId);
             if (pending) {
-              const funds = await this.botService.getFunds(pending.userId);
+              const funds = await this.botService.getFunds(pending.telegramId);
               const keyboard = this.botService.buildFundKeyboard(funds);
               await ctx.reply(
                 '💸 Insufficient funds in the selected account. Choose another account or "No account":',
@@ -173,6 +180,12 @@ export class TelegramBotUpdate {
         }
       }
     } catch (error) {
+      if (error instanceof TelegramAccountNotLinkedError) {
+        this.botService.clearPendingExpense(chatId);
+        await ctx.answerCbQuery().catch(() => undefined);
+        await ctx.reply(NOT_LINKED_MESSAGE);
+        return;
+      }
       this.logger.error(`Callback error: ${error.message}`, error.stack);
       await ctx.answerCbQuery('Failed to save expense. Please try again.');
       return;
@@ -202,7 +215,16 @@ export class TelegramBotUpdate {
       return;
     }
 
-    const categories = await this.botService.getCategories(userId);
+    let categories: CoreCategory[];
+    try {
+      categories = await this.botService.getCategories(telegramId);
+    } catch (error) {
+      if (error instanceof TelegramAccountNotLinkedError) {
+        await ctx.reply(message + '\n\n' + NOT_LINKED_MESSAGE);
+        return;
+      }
+      throw error;
+    }
     if (categories.length === 0) {
       await ctx.reply(
         message + '\n\nNo categories available. Add categories in the app to save expenses.',
@@ -217,7 +239,7 @@ export class TelegramBotUpdate {
       currency: dto.currency || 'RUB',
       comment: dto.merchant ?? undefined,
       date,
-      userId,
+      telegramId,
     });
 
     const keyboard = this.botService.buildCategoryKeyboard(categories);

@@ -37,9 +37,19 @@ export interface CreateCostPayload {
   amount: number;
   category: string;
   comment?: string;
-  userId: string;
   date: string; // ISO
   fundId?: string;
+}
+
+/**
+ * The core API answered 401 to a call made on behalf of a Telegram user:
+ * that Telegram id is not linked to any account (any more).
+ */
+export class TelegramAccountNotLinkedError extends Error {
+  constructor(readonly telegramId: number) {
+    super(`Telegram account ${telegramId} is not linked`);
+    this.name = 'TelegramAccountNotLinkedError';
+  }
 }
 
 @Injectable()
@@ -58,11 +68,21 @@ export class CoreApiService {
       this.configService.get<string>('TELEGRAM_BOT_SECRET') || '';
   }
 
-  private getHeaders() {
+  /** The core API resolves the user from the bot secret plus the Telegram id. */
+  private getHeaders(telegramId: number) {
     return {
       'Content-Type': 'application/json',
       ...(this.botSecret && { 'X-Telegram-Bot-Secret': this.botSecret }),
+      'X-Telegram-User-Id': String(telegramId),
     };
+  }
+
+  private rethrowIfNotLinked(error: unknown, telegramId: number): void {
+    const status = (error as { response?: { status?: number } } | undefined)
+      ?.response?.status;
+    if (status === 401) {
+      throw new TelegramAccountNotLinkedError(telegramId);
+    }
   }
 
   /**
@@ -73,7 +93,7 @@ export class CoreApiService {
     try {
       const response$ = this.httpService.get<{ userId?: string; id?: string }>(
         `${this.apiBaseUrl}/api/telegram/user-by-telegram/${telegramId}`,
-        { headers: this.getHeaders() },
+        { headers: this.getHeaders(telegramId) },
       );
       const { data } = await firstValueFrom(response$);
       return data.userId ?? data.id ?? null;
@@ -88,50 +108,58 @@ export class CoreApiService {
     }
   }
 
-  async getCategories(userId: string): Promise<CoreCategory[]> {
-    const response$ = this.httpService.get<CoreCategory[]>(
-      `${this.apiBaseUrl}/api/category`,
-      {
-        params: { userId },
-        headers: this.getHeaders(),
-      },
-    );
-    const { data } = await firstValueFrom(response$);
-    return Array.isArray(data) ? data : [];
+  async getCategories(telegramId: number): Promise<CoreCategory[]> {
+    try {
+      const response$ = this.httpService.get<CoreCategory[]>(
+        `${this.apiBaseUrl}/api/category`,
+        { headers: this.getHeaders(telegramId) },
+      );
+      const { data } = await firstValueFrom(response$);
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      this.rethrowIfNotLinked(error, telegramId);
+      throw error;
+    }
   }
 
   /**
-   * Get user's funds. Core API must expose e.g. GET /api/funds?userId=...
+   * Get the funds of the user linked to this Telegram id (GET /api/funds).
    */
-  async getFunds(userId: string): Promise<CoreFund[]> {
+  async getFunds(telegramId: number): Promise<CoreFund[]> {
     try {
       const response$ = this.httpService.get<GetFundsResponse>(
         `${this.apiBaseUrl}/api/funds`,
-        {
-          params: { userId },
-          headers: this.getHeaders(),
-        },
+        { headers: this.getHeaders(telegramId) },
       );
 
       const { data } = await firstValueFrom(response$);
 
       return Array.isArray(data?.funds) ? data.funds : [];
     } catch (error: any) {
+      this.rethrowIfNotLinked(error, telegramId);
       if (error.response?.status === 404) {
         return [];
       }
-      this.logger.warn(`getFunds(${userId}): ${error.message}`);
+      this.logger.warn(`getFunds(${telegramId}): ${error.message}`);
       return [];
     }
   }
 
-  async createCost(payload: CreateCostPayload): Promise<unknown> {
-    const response$ = this.httpService.post(
-      `${this.apiBaseUrl}/api/cost`,
-      payload,
-      { headers: this.getHeaders() },
-    );
-    const { data } = await firstValueFrom(response$);
-    return data;
+  async createCost(
+    telegramId: number,
+    payload: CreateCostPayload,
+  ): Promise<unknown> {
+    try {
+      const response$ = this.httpService.post(
+        `${this.apiBaseUrl}/api/cost`,
+        payload,
+        { headers: this.getHeaders(telegramId) },
+      );
+      const { data } = await firstValueFrom(response$);
+      return data;
+    } catch (error: any) {
+      this.rethrowIfNotLinked(error, telegramId);
+      throw error;
+    }
   }
 }
