@@ -236,6 +236,92 @@ describe('TelegramBotService', () => {
       );
       expect(service.formatSavedCost({} as never)).toBe('✅ Expense saved.');
     });
+
+    describe('budget line', () => {
+      const saved = { amount: 100, currency: 'THB' };
+      const budget = (overrides: Record<string, unknown> = {}) => ({
+        category: { id: 'c1', name: 'Restaurants', icon: 'mdi-food' },
+        month: '2026-11',
+        limit: 3000,
+        currency: 'THB',
+        spent: 2140,
+        remaining: 860,
+        percent: 71.3,
+        state: 'on_track',
+        currencyMismatch: false,
+        ...overrides,
+      });
+      const format = (b: unknown) =>
+        service.formatSavedCost({ ...saved, budget: b } as never, fund());
+
+      afterEach(() => jest.useRealTimers());
+
+      it('is exactly as before without a budget (old API, no limit)', () => {
+        const plain = '✅ Saved: 100.00 THB from Card';
+        expect(service.formatSavedCost(saved, fund())).toBe(plain);
+        expect(format(null)).toBe(plain);
+        expect(format(undefined)).toBe(plain);
+      });
+
+      it('shows spent / limit and what is left when on track', () => {
+        expect(format(budget())).toBe(
+          '✅ Saved: 100.00 THB from Card\nRestaurants: 2140.00 / 3000.00 THB · left 860.00',
+        );
+      });
+
+      it('adds the pace warning when ahead, on the Bangkok day', () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-11-05T05:00:00Z'));
+        expect(
+          format(budget({ state: 'ahead', percent: 71.3, remaining: 860 })),
+        ).toBe(
+          '✅ Saved: 100.00 THB from Card\nRestaurants: 2140.00 / 3000.00 THB · left 860.00\n⚠️ 71% used on day 5 of 30 — ahead of pace',
+        );
+        // 18:00Z on the 5th is already the 6th in Bangkok
+        jest.setSystemTime(new Date('2026-11-05T18:00:00Z'));
+        expect(format(budget({ state: 'ahead' }))).toContain('on day 6 of 30');
+      });
+
+      it('says by how much it is over, without a pace line', () => {
+        expect(
+          format(
+            budget({ state: 'over', spent: 3340, remaining: -340, percent: 111 }),
+          ),
+        ).toBe(
+          '✅ Saved: 100.00 THB from Card\nRestaurants: 3340.00 / 3000.00 THB · over by 340.00',
+        );
+      });
+
+      it('still prints the budget of another month than now, without pace', () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-11-05T05:00:00Z'));
+        const text = format(budget({ state: 'ahead', month: '2026-10' }));
+        expect(text).toContain('Restaurants: 2140.00 / 3000.00 THB · left 860.00');
+        expect(text).not.toContain('ahead of pace');
+      });
+
+      it('prints nothing for a state-less budget (currency mismatch)', () => {
+        expect(format(budget({ state: null, currencyMismatch: true }))).toBe(
+          '✅ Saved: 100.00 THB from Card',
+        );
+      });
+
+      it('never throws and prints nothing on a malformed budget', () => {
+        const plain = '✅ Saved: 100.00 THB from Card';
+        for (const bad of [
+          'x',
+          42,
+          [],
+          {},
+          budget({ state: 'weird' }),
+          budget({ category: null }),
+          budget({ category: { name: 5 } }),
+          budget({ limit: 'a' }),
+          budget({ spent: null }),
+          budget({ currency: undefined }),
+        ]) {
+          expect(format(bad)).toBe(plain);
+        }
+      });
+    });
   });
 
   describe('formatExpenseResult', () => {
