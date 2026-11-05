@@ -347,6 +347,57 @@ describe('TelegramBotService', () => {
     });
   });
 
+  describe('buildFundKeyboard', () => {
+    const rows = (funds: CoreFund[]) =>
+      service
+        .buildFundKeyboard(funds)
+        .inline_keyboard.map((row) => (row[0] as { text: string }).text);
+
+    it('lists accounts first, then savings with a 🐷 prefix', () => {
+      expect(
+        rows([
+          fund({ _id: 's1', name: 'Japan', kind: 'savings' }),
+          fund({ _id: 'a1', name: 'Card', kind: 'account' }),
+          fund({ _id: 'a2', name: 'Cash' }),
+          fund({ _id: 's2', name: 'Cushion', kind: 'savings' }),
+        ]),
+      ).toEqual([
+        'Card - 10000 THB',
+        'Cash - 10000 THB',
+        '🐷 Japan - 10000 THB',
+        '🐷 Cushion - 10000 THB',
+        'No account',
+      ]);
+    });
+
+    it('keeps the callback data of a savings fund', () => {
+      const keyboard = service.buildFundKeyboard([
+        fund({ _id: 's1', kind: 'savings' }),
+      ]);
+      expect(keyboard.inline_keyboard[0][0]).toMatchObject({
+        callback_data: 'fund_s1',
+      });
+    });
+
+    it('is exactly as before without kind (old API)', () => {
+      expect(
+        rows([
+          fund({ _id: 'a', name: 'Card' }),
+          fund({ _id: 'b', name: 'Cash' }),
+        ]),
+      ).toEqual(['Card - 10000 THB', 'Cash - 10000 THB', 'No account']);
+    });
+
+    it('still hides funds without a positive balance, savings included', () => {
+      expect(
+        rows([
+          fund({ name: 'Empty', currentBalance: 0 }),
+          fund({ name: 'Empty pig', kind: 'savings', currentBalance: 0 }),
+        ]),
+      ).toEqual(['No account']);
+    });
+  });
+
   describe('buildCategoryKeyboard', () => {
     const categories = [{ name: 'Food', value: 'c1' }];
 
