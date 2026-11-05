@@ -14,6 +14,7 @@ import {
   CoreTag,
   CoreUser,
   CreatedCost,
+  CostBudget,
   CreateCostPayload,
 } from '../core-api/core-api.service';
 import { ReceiptResultDto } from '../receipts/dto/receipt-result.dto';
@@ -278,7 +279,83 @@ export class TelegramBotService {
     if (tags.length > 0) {
       message += ' · ' + tags.map((tag) => `#${tag}`).join(' ');
     }
-    return message;
+    return message + this.formatBudgetLines(cost.budget);
+  }
+
+  /**
+   * `\nRestaurants: 2140.00 / 3000.00 THB · left 860.00`, plus a pace warning
+   * when ahead. Empty unless the budget is complete: the expense is already
+   * saved, so a malformed or missing budget must never break the reply.
+   */
+  private formatBudgetLines(budget: CostBudget | null | undefined): string {
+    try {
+      if (!budget || typeof budget !== 'object') return '';
+      const { state, limit, spent, currency } = budget;
+      const name = budget.category?.name;
+      if (state !== 'on_track' && state !== 'ahead' && state !== 'over') {
+        return '';
+      }
+      if (
+        typeof name !== 'string' ||
+        !name ||
+        typeof currency !== 'string' ||
+        !currency ||
+        !Number.isFinite(limit) ||
+        !Number.isFinite(spent)
+      ) {
+        return '';
+      }
+      const amount = (value: number) =>
+        formatMoney(value, currency).slice(0, -(currency.length + 1));
+      const remaining = Number.isFinite(budget.remaining)
+        ? (budget.remaining as number)
+        : (limit as number) - (spent as number);
+      let line = `\n${name}: ${amount(spent as number)} / ${amount(limit as number)} ${currency}`;
+      line +=
+        state === 'over'
+          ? ` · over by ${amount(-remaining)}`
+          : ` · left ${amount(remaining)}`;
+      if (state === 'ahead') {
+        const pace = this.paceNote(budget, limit as number, spent as number);
+        if (pace) line += `\n${pace}`;
+      }
+      return line;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * `⚠️ 71% used on day 5 of 30 — ahead of pace`. The API sends no pace with
+   * the saved cost, so the day comes from the Bangkok clock and only the
+   * current month has one: for any other month the line is left out.
+   */
+  private paceNote(
+    budget: CostBudget,
+    limit: number,
+    spent: number,
+  ): string {
+    const match = /^(\d{4})-(\d{2})$/.exec(budget.month ?? '');
+    if (!match) return '';
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const part = (type: string) =>
+      Number(parts.find((p) => p.type === type)?.value);
+    if (part('year') !== Number(match[1]) || part('month') !== Number(match[2])) {
+      return '';
+    }
+    const daysInMonth = new Date(
+      Date.UTC(Number(match[1]), Number(match[2]), 0),
+    ).getUTCDate();
+    const percent = Number.isFinite(budget.percent)
+      ? (budget.percent as number)
+      : (spent / limit) * 100;
+    if (!Number.isFinite(percent)) return '';
+    return `⚠️ ${Math.round(percent)}% used on day ${part('day')} of ${daysInMonth} — ahead of pace`;
   }
 
   /**

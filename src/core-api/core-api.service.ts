@@ -52,6 +52,25 @@ export interface CreatedCost {
   /** Debited from the fund, in the fund's currency; missing means `amount` */
   fundAmount?: number;
   tags?: string[];
+  /**
+   * Limit of the expense's category for the expense's month. Absent on an API
+   * that predates budgets, `null` when the category has no limit.
+   */
+  budget?: CostBudget | null;
+}
+
+/** The budget of POST /api/cost; every field is read defensively. */
+export interface CostBudget {
+  category?: { id?: string; name?: string };
+  /** `YYYY-MM` of the expense's date */
+  month?: string;
+  limit?: number;
+  currency?: string;
+  spent?: number;
+  remaining?: number;
+  percent?: number;
+  state?: 'on_track' | 'ahead' | 'over' | null;
+  currencyMismatch?: boolean;
 }
 
 /** The fields of the full user (GET /api/me) the bot reads. */
