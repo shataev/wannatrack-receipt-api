@@ -210,10 +210,16 @@ export class TelegramBotService {
   }
 
   buildFundKeyboard(funds: CoreFund[]): InlineKeyboardMarkup {
-    const buttons = funds.filter((fund) => fund.currentBalance > 0)
-    .map((fund) => [
+    const spendable = funds.filter((fund) => fund.currentBalance > 0);
+    const isSavings = (fund: CoreFund) => fund.kind === 'savings';
+    // Accounts first, then savings; each group keeps the API's order.
+    const ordered = [
+      ...spendable.filter((fund) => !isSavings(fund)),
+      ...spendable.filter(isSavings),
+    ];
+    const buttons = ordered.map((fund) => [
       Markup.button.callback(
-        `${fund.name} - ${fund.currentBalance} ${fund.currency}`,
+        `${isSavings(fund) ? '🐷 ' : ''}${fund.name} - ${fund.currentBalance} ${fund.currency}`,
         'fund_' + fund._id,
       ),
     ]);

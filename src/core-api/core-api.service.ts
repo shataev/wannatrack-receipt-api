@@ -18,6 +18,8 @@ export interface CoreFund {
   initialBalance: number;
   currentBalance: number;
   isDefault: boolean;
+  /** Absent on an API that predates savings funds — treated as 'account'. */
+  kind?: 'account' | 'savings';
   currency: string;
   createdAt: string;
   updatedAt: string;
